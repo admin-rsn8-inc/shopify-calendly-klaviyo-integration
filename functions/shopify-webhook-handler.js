@@ -22,7 +22,7 @@ exports.handler = async (event, context) => {
     const order = JSON.parse(body);
     console.log('Received order object:', JSON.stringify(order, null, 2));
 
-    const customerEmail = order.email;
+    let customerEmail = order.email || '';
     let firstName = '';
     let lastName = '';
 
@@ -34,6 +34,24 @@ exports.handler = async (event, context) => {
       // Fallback to billing address for guest checkouts
       firstName = order.billing_address.first_name || '';
       lastName = order.billing_address.last_name || '';
+    }
+
+    // If customerEmail is empty, try to fetch customer data via API
+    if (!customerEmail) {
+      console.log('Customer email not found in webhook payload, fetching customer data via API...');
+      if (order.customer && order.customer.admin_graphql_api_id) {
+        const customerData = await getCustomerData(order.customer.admin_graphql_api_id);
+        if (customerData) {
+          customerEmail = customerData.email || '';
+          firstName = customerData.firstName || '';
+          lastName = customerData.lastName || '';
+          console.log(`Fetched customer data from API: ${firstName} ${lastName} (${customerEmail})`);
+        } else {
+          console.error('Failed to fetch customer data via API.');
+        }
+      } else {
+        console.error('No customer ID available to fetch customer data.');
+      }
     }
 
     console.log(`Received order from ${firstName} ${lastName} (${customerEmail})`);
@@ -251,6 +269,54 @@ async function createCalendlySchedulingLink({ email, firstName, lastName, eventT
       JSON.stringify(error.response ? error.response.data : error.message, null, 2)
     );
     throw new Error('Failed to create Calendly scheduling link');
+  }
+}
+
+// Function to fetch customer data via API
+async function getCustomerData(customerId) {
+  try {
+    const graphqlEndpoint = `https://${SHOPIFY_STORE_URL}/admin/api/2024-10/graphql.json`;
+
+    const query = `
+      query GetCustomer($customerId: ID!) {
+        customer(id: $customerId) {
+          id
+          email
+          firstName
+          lastName
+        }
+      }
+    `;
+
+    const variables = {
+      customerId: customerId,
+    };
+
+    const response = await axios.post(
+      graphqlEndpoint,
+      { query, variables },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Shopify-Access-Token': ADMIN_API_ACCESS_TOKEN,
+        },
+      }
+    );
+
+    const data = response.data;
+
+    if (data.errors) {
+      console.error('GraphQL errors:', data.errors);
+      return null;
+    }
+
+    return data.data.customer;
+  } catch (error) {
+    console.error(
+      'Error fetching customer data:',
+      JSON.stringify(error.response ? error.response.data : error.message, null, 2)
+    );
+    return null;
   }
 }
 
