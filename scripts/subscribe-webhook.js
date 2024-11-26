@@ -13,12 +13,12 @@ async function subscribeToWebhook() {
   console.log('Webhook Address:', WEBHOOK_ADDRESS);
   console.log('Webhook Topic:', WEBHOOK_TOPIC);
 
-  const endpoint = `https://${SHOP_NAME}.myshopify.com/admin/api/2023-10/graphql.json`;
+  const endpoint = `https://${SHOP_NAME}.myshopify.com/admin/api/2024-10/graphql.json`;
 
   // Query to get existing webhook subscriptions
   const checkQuery = `
-    {
-      webhookSubscriptions(first: 100) {
+    query {
+      webhookSubscriptions(first: 100, topics: ${WEBHOOK_TOPIC}) {
         edges {
           node {
             id
@@ -60,7 +60,7 @@ async function subscribeToWebhook() {
 
     // Filter webhooks to find if our webhook already exists
     const webhookExists = webhooks.some(
-      webhook =>
+      (webhook) =>
         webhook.node.callbackUrl === WEBHOOK_ADDRESS && webhook.node.topic === WEBHOOK_TOPIC
     );
 
@@ -74,7 +74,10 @@ async function subscribeToWebhook() {
     // Mutation to create the webhook subscription
     const createQuery = `
       mutation webhookSubscriptionCreate($topic: WebhookSubscriptionTopic!, $callbackUrl: URL!) {
-        webhookSubscriptionCreate(topic: $topic, webhookSubscription: {callbackUrl: $callbackUrl}) {
+        webhookSubscriptionCreate(
+          topic: $topic
+          webhookSubscription: { callbackUrl: $callbackUrl, format: JSON }
+        ) {
           userErrors {
             field
             message
