@@ -21,19 +21,31 @@ exports.handler = async (event, context) => {
     // Log the order object keys to inspect its structure
     console.log('Order object keys:', Object.keys(order));
 
-    // Extract customer information, handling cases where customer data may be missing
+    // Log the customer and billing address objects
+    console.log('order.customer:', JSON.stringify(order.customer, null, 2));
+    console.log('order.billing_address:', JSON.stringify(order.billing_address, null, 2));
+
+    // Extract customer information
     const customerEmail =
-      order.email ||
       (order.customer && order.customer.email) ||
+      order.email ||
+      order.contact_email ||
+      (order.billing_address && order.billing_address.email) ||
       '';
+
     const firstName =
       (order.customer && order.customer.first_name) ||
       (order.billing_address && order.billing_address.first_name) ||
       '';
+
     const lastName =
       (order.customer && order.customer.last_name) ||
       (order.billing_address && order.billing_address.last_name) ||
       '';
+
+    console.log('Extracted customerEmail:', customerEmail);
+    console.log('Extracted firstName:', firstName);
+    console.log('Extracted lastName:', lastName);
 
     console.log(`Received order from ${firstName} ${lastName} (${customerEmail})`);
 
@@ -112,10 +124,10 @@ function verifyShopifyWebhook(hmacHeader, body) {
   return generatedHash === hmacHeader;
 }
 
-// Updated function to retrieve the Calendly event handle from metaobject using GraphQL
+// Function to retrieve the Calendly event handle from metaobject using GraphQL
 async function getCalendlyEventHandle(productId) {
   try {
-    const graphqlEndpoint = `https://${SHOPIFY_STORE_URL}/admin/api/2023-10/graphql.json`;
+    const graphqlEndpoint = `https://${SHOPIFY_STORE_URL}/admin/api/2024-10/graphql.json`;
 
     // Query to get the 'custom.event' metafield from the product
     const query = `
@@ -269,6 +281,11 @@ async function trackKlaviyoEvent({
     if (firstName) customerProperties.$first_name = firstName;
     if (lastName) customerProperties.$last_name = lastName;
 
+    if (!email) {
+      console.warn('No customer email available. Skipping Klaviyo event tracking.');
+      return;
+    }
+
     const payload = {
       data: {
         type: 'event',
@@ -290,7 +307,7 @@ async function trackKlaviyoEvent({
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Klaviyo-API-Key ${KLAVIYO_API_KEY}`,
-        Revision: '2023-07-15', // Corrected header key
+        Revision: '2023-07-15',
       },
     });
     console.log('Tracked Klaviyo event: Order Contains Event.');
@@ -310,7 +327,7 @@ async function trackKlaviyoEvent({
 // Function to add a note with multiple scheduling links to the Shopify order using GraphQL
 async function addNoteToShopifyOrder({ orderId, schedulingLinks }) {
   try {
-    const graphqlEndpoint = `https://${SHOPIFY_STORE_URL}/admin/api/2023-10/graphql.json`;
+    const graphqlEndpoint = `https://${SHOPIFY_STORE_URL}/admin/api/2024-10/graphql.json`;
 
     const notes = schedulingLinks
       .map((link) => `${link.title}: ${link.link}`)
