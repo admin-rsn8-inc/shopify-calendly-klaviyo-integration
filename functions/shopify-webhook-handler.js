@@ -16,31 +16,33 @@ exports.handler = async (event, context) => {
       return { statusCode: 401, body: 'Invalid request' };
     }
 
-    const order = JSON.parse(body);
+    const webhookOrder = JSON.parse(body);
+    const orderId = webhookOrder.id;
 
-    // Log the order object keys to inspect its structure
-    console.log('Order object keys:', Object.keys(order));
+    // Fetch the full order data including customer information via GraphQL
+    const order = await getFullOrderData(orderId);
 
-    // Log the customer and billing address objects
-    console.log('order.customer:', JSON.stringify(order.customer, null, 2));
-    console.log('order.billing_address:', JSON.stringify(order.billing_address, null, 2));
+    if (!order) {
+      console.error('Failed to retrieve order data from Shopify.');
+      return { statusCode: 500, body: 'Failed to retrieve order data' };
+    }
 
     // Extract customer information
     const customerEmail =
       (order.customer && order.customer.email) ||
       order.email ||
-      order.contact_email ||
-      (order.billing_address && order.billing_address.email) ||
+      order.contactEmail ||
+      (order.billingAddress && order.billingAddress.email) ||
       '';
 
     const firstName =
-      (order.customer && order.customer.first_name) ||
-      (order.billing_address && order.billing_address.first_name) ||
+      (order.customer && order.customer.firstName) ||
+      (order.billingAddress && order.billingAddress.firstName) ||
       '';
 
     const lastName =
-      (order.customer && order.customer.last_name) ||
-      (order.billing_address && order.billing_address.last_name) ||
+      (order.customer && order.customer.lastName) ||
+      (order.billingAddress && order.billingAddress.lastName) ||
       '';
 
     console.log('Extracted customerEmail:', customerEmail);
@@ -51,8 +53,9 @@ exports.handler = async (event, context) => {
 
     let schedulingLinks = []; // Array to hold all scheduling links
 
-    for (const lineItem of order.line_items) {
-      const productId = lineItem.product_id;
+    for (const edge of order.lineItems.edges) {
+      const lineItem = edge.node;
+      const productId = lineItem.product.id.split('/').pop();
       const quantity = lineItem.quantity; // Number of times the event was purchased
 
       const eventHandle = await getCalendlyEventHandle(productId);
@@ -95,14 +98,14 @@ exports.handler = async (event, context) => {
           firstName,
           lastName,
           schedulingLinks,
-          orderId: order.id,
-          orderTime: order.created_at,
+          orderId: orderId,
+          orderTime: order.createdAt,
         });
       }
 
       // Add all scheduling links to Shopify order notes
       await addNoteToShopifyOrder({
-        orderId: order.id,
+        orderId: orderId,
         schedulingLinks,
       });
     }
@@ -122,6 +125,77 @@ function verifyShopifyWebhook(hmacHeader, body) {
     .digest('base64');
 
   return generatedHash === hmacHeader;
+}
+
+// Function to fetch the full order data including customer information
+async function getFullOrderData(orderId) {
+  try {
+    const graphqlEndpoint = `https://${SHOPIFY_STORE_URL}/admin/api/2024-10/graphql.json`;
+
+    const query = `
+      query GetOrder($orderId: ID!) {
+        order(id: $orderId) {
+          id
+          name
+          email
+          contactEmail
+          createdAt
+          customer {
+            email
+            firstName
+            lastName
+          }
+          billingAddress {
+            firstName
+            lastName
+            email
+          }
+          lineItems(first: 100) {
+            edges {
+              node {
+                id
+                title
+                quantity
+                product {
+                  id
+                }
+              }
+            }
+          }
+        }
+      }
+    `;
+
+    const variables = {
+      orderId: `gid://shopify/Order/${orderId}`,
+    };
+
+    const response = await axios.post(
+      graphqlEndpoint,
+      { query, variables },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Shopify-Access-Token': ADMIN_API_ACCESS_TOKEN,
+        },
+      }
+    );
+
+    const data = response.data;
+
+    if (data.errors) {
+      console.error('GraphQL errors:', data.errors);
+      return null;
+    }
+
+    return data.data.order;
+  } catch (error) {
+    console.error(
+      'Error fetching order data:',
+      JSON.stringify(error.response ? error.response.data : error.message, null, 2)
+    );
+    return null;
+  }
 }
 
 // Function to retrieve the Calendly event handle from metaobject using GraphQL
