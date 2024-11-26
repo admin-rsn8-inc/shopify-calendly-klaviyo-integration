@@ -17,9 +17,23 @@ exports.handler = async (event, context) => {
     }
 
     const order = JSON.parse(body);
-    const customerEmail = order.email || (order.customer && order.customer.email);
-    const firstName = order.customer ? order.customer.first_name : '';
-    const lastName = order.customer ? order.customer.last_name : '';
+
+    // Log the order object keys to inspect its structure
+    console.log('Order object keys:', Object.keys(order));
+
+    // Extract customer information, handling cases where customer data may be missing
+    const customerEmail =
+      order.email ||
+      (order.customer && order.customer.email) ||
+      '';
+    const firstName =
+      (order.customer && order.customer.first_name) ||
+      (order.billing_address && order.billing_address.first_name) ||
+      '';
+    const lastName =
+      (order.customer && order.customer.last_name) ||
+      (order.billing_address && order.billing_address.last_name) ||
+      '';
 
     console.log(`Received order from ${firstName} ${lastName} (${customerEmail})`);
 
@@ -47,7 +61,10 @@ exports.handler = async (event, context) => {
               eventTypeUri,
             });
 
-            schedulingLinks.push({ title: `${lineItem.title} (Ticket ${i + 1})`, link: schedulingLink });
+            schedulingLinks.push({
+              title: `${lineItem.title} (Ticket ${i + 1})`,
+              link: schedulingLink,
+            });
           }
         } else {
           console.warn(`No matching event found for handle: ${eventHandle}`);
@@ -57,14 +74,19 @@ exports.handler = async (event, context) => {
 
     // Track the event in Klaviyo with all scheduling links
     if (schedulingLinks.length > 0) {
-      await trackKlaviyoEvent({
-        email: customerEmail,
-        firstName,
-        lastName,
-        schedulingLinks,
-        orderId: order.id,
-        orderTime: order.created_at,
-      });
+      // Ensure customer email is available before tracking the event
+      if (!customerEmail) {
+        console.warn('No customer email available. Skipping Klaviyo event tracking.');
+      } else {
+        await trackKlaviyoEvent({
+          email: customerEmail,
+          firstName,
+          lastName,
+          schedulingLinks,
+          orderId: order.id,
+          orderTime: order.created_at,
+        });
+      }
 
       // Add all scheduling links to Shopify order notes
       await addNoteToShopifyOrder({
@@ -146,7 +168,9 @@ async function getCalendlyEventHandle(productId) {
     const metaobject = metafield.reference;
 
     const fields = metaobject.fields;
-    const calendlyField = fields.find((field) => field.key === 'calendly_event_url_handle');
+    const calendlyField = fields.find(
+      (field) => field.key === 'calendly_event_url_handle'
+    );
 
     return calendlyField ? calendlyField.value : null;
   } catch (error) {
@@ -217,7 +241,11 @@ async function createCalendlySchedulingLink({ email, firstName, lastName, eventT
   } catch (error) {
     console.error(
       'Error creating scheduling link via Calendly:',
-      JSON.stringify(error.response ? error.response.data : error.message, null, 2)
+      JSON.stringify(
+        error.response ? error.response.data : error.message,
+        null,
+        2
+      )
     );
     throw new Error('Failed to create Calendly scheduling link');
   }
@@ -236,9 +264,8 @@ async function trackKlaviyoEvent({
     const eventTimestamp = Math.floor(new Date(orderTime).getTime() / 1000);
 
     // Build customer properties
-    const customerProperties = {
-      $email: email,
-    };
+    const customerProperties = {};
+    if (email) customerProperties.$email = email;
     if (firstName) customerProperties.$first_name = firstName;
     if (lastName) customerProperties.$last_name = lastName;
 
@@ -259,27 +286,28 @@ async function trackKlaviyoEvent({
 
     console.log('Klaviyo event payload:', JSON.stringify(payload, null, 2));
 
-    await axios.post(
-      'https://a.klaviyo.com/api/events/',
-      payload,
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Klaviyo-API-Key ${KLAVIYO_API_KEY}`,
-        },
-      }
-    );
+    await axios.post('https://a.klaviyo.com/api/events/', payload, {
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Klaviyo-API-Key ${KLAVIYO_API_KEY}`,
+        Revision: '2023-07-15', // Corrected header key
+      },
+    });
     console.log('Tracked Klaviyo event: Order Contains Event.');
   } catch (error) {
     console.error(
       'Error tracking Klaviyo event:',
-      JSON.stringify(error.response ? error.response.data : error.message, null, 2)
+      JSON.stringify(
+        error.response ? error.response.data : error.message,
+        null,
+        2
+      )
     );
     throw new Error('Failed to track Klaviyo event');
   }
 }
 
-// Updated function to add a note with multiple scheduling links to the Shopify order using GraphQL
+// Function to add a note with multiple scheduling links to the Shopify order using GraphQL
 async function addNoteToShopifyOrder({ orderId, schedulingLinks }) {
   try {
     const graphqlEndpoint = `https://${SHOPIFY_STORE_URL}/admin/api/2023-10/graphql.json`;
@@ -339,7 +367,11 @@ async function addNoteToShopifyOrder({ orderId, schedulingLinks }) {
   } catch (error) {
     console.error(
       'Error adding note to Shopify order:',
-      JSON.stringify(error.response ? error.response.data : error.message, null, 2)
+      JSON.stringify(
+        error.response ? error.response.data : error.message,
+        null,
+        2
+      )
     );
     throw new Error('Failed to add note to Shopify order');
   }
