@@ -90,7 +90,7 @@ function verifyShopifyWebhook(hmacHeader, body) {
   return generatedHash === hmacHeader;
 }
 
-// Updated function to retrieve the Calendly event handle from metaobject using GraphQL
+// Function to retrieve the Calendly event handle from metaobject using GraphQL
 async function getCalendlyEventHandle(productId) {
   try {
     const graphqlEndpoint = `https://${SHOPIFY_STORE_URL}/admin/api/2023-10/graphql.json`;
@@ -223,7 +223,7 @@ async function createCalendlySchedulingLink({ email, firstName, lastName, eventT
   }
 }
 
-// Function to track a custom event in Klaviyo
+// Updated function to track a custom event in Klaviyo
 async function trackKlaviyoEvent({
   email,
   firstName,
@@ -233,7 +233,8 @@ async function trackKlaviyoEvent({
   orderTime,
 }) {
   try {
-    const eventTime = new Date(orderTime).toISOString();
+    // Klaviyo expects the event time as a Unix timestamp in seconds
+    const eventTime = Math.floor(new Date(orderTime).getTime() / 1000);
 
     await axios.post(
       'https://a.klaviyo.com/api/events/',
@@ -241,26 +242,14 @@ async function trackKlaviyoEvent({
         data: {
           type: 'event',
           attributes: {
-            metric: {
-              data: {
-                type: 'metric',
-                attributes: {
-                  name: 'Placed Order Containing Event Product',
-                },
-              },
-            },
+            event_name: 'Order Contains Event',
             profile: {
-              data: {
-                type: 'profile',
-                attributes: {
-                  email: email,
-                  first_name: firstName,
-                  last_name: lastName,
-                },
-              },
+              email: email,
+              first_name: firstName,
+              last_name: lastName,
             },
             properties: {
-              scheduling_links: schedulingLinks, // Pass the array of links
+              scheduling_links: schedulingLinks,
               order_id: orderId,
             },
             time: eventTime,
@@ -279,7 +268,11 @@ async function trackKlaviyoEvent({
   } catch (error) {
     console.error(
       'Error tracking Klaviyo event:',
-      JSON.stringify(error.response ? error.response.data : error.message, null, 2)
+      JSON.stringify(
+        error.response ? error.response.data : error.message,
+        null,
+        2
+      )
     );
     throw new Error('Failed to track Klaviyo event');
   }
