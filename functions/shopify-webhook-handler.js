@@ -21,9 +21,7 @@ exports.handler = async (event, context) => {
     const firstName = order.customer.first_name;
     const lastName = order.customer.last_name;
 
-    console.log(
-      `Received order from ${firstName} ${lastName} (${customerEmail})`
-    );
+    console.log(`Received order from ${firstName} ${lastName} (${customerEmail})`);
 
     let schedulingLinks = []; // Array to hold all scheduling links
 
@@ -34,9 +32,7 @@ exports.handler = async (event, context) => {
       const eventHandle = await getCalendlyEventHandle(productId);
 
       if (eventHandle) {
-        console.log(
-          `Product ${lineItem.title} has a Calendly event handle: ${eventHandle}`
-        );
+        console.log(`Product ${lineItem.title} has a Calendly event handle: ${eventHandle}`);
 
         // Get the Calendly Event Type URI based on the handle
         const eventTypeUri = await getCalendlyEventTypeUri(eventHandle);
@@ -51,10 +47,7 @@ exports.handler = async (event, context) => {
               eventTypeUri,
             });
 
-            schedulingLinks.push({
-              title: `${lineItem.title} (Ticket ${i + 1})`,
-              link: schedulingLink,
-            });
+            schedulingLinks.push({ title: `${lineItem.title} (Ticket ${i + 1})`, link: schedulingLink });
           }
         } else {
           console.warn(`No matching event found for handle: ${eventHandle}`);
@@ -97,7 +90,7 @@ function verifyShopifyWebhook(hmacHeader, body) {
   return generatedHash === hmacHeader;
 }
 
-// Function to retrieve the Calendly event handle from metaobject using GraphQL
+// Updated function to retrieve the Calendly event handle from metaobject using GraphQL
 async function getCalendlyEventHandle(productId) {
   try {
     const graphqlEndpoint = `https://${SHOPIFY_STORE_URL}/admin/api/2023-10/graphql.json`;
@@ -153,9 +146,7 @@ async function getCalendlyEventHandle(productId) {
     const metaobject = metafield.reference;
 
     const fields = metaobject.fields;
-    const calendlyField = fields.find(
-      (field) => field.key === 'calendly_event_url_handle'
-    );
+    const calendlyField = fields.find((field) => field.key === 'calendly_event_url_handle');
 
     return calendlyField ? calendlyField.value : null;
   } catch (error) {
@@ -232,7 +223,7 @@ async function createCalendlySchedulingLink({ email, firstName, lastName, eventT
   }
 }
 
-// Updated function to track a custom event in Klaviyo
+// Corrected function to track a custom event in Klaviyo
 async function trackKlaviyoEvent({
   email,
   firstName,
@@ -242,8 +233,7 @@ async function trackKlaviyoEvent({
   orderTime,
 }) {
   try {
-    // Klaviyo expects the event time as a Unix timestamp in seconds
-    const eventTime = Math.floor(new Date(orderTime).getTime() / 1000);
+    const eventTime = new Date(orderTime).toISOString();
 
     await axios.post(
       'https://a.klaviyo.com/api/events/',
@@ -251,16 +241,13 @@ async function trackKlaviyoEvent({
         data: {
           type: 'event',
           attributes: {
-            event_name: 'Order Contains Event',
+            metric: {
+              name: 'Placed Order Containing Event Product', // Updated event name
+            },
             profile: {
-              data: {
-                type: 'profile',
-                attributes: {
-                  email: email,
-                  first_name: firstName,
-                  last_name: lastName,
-                },
-              },
+              email: email,
+              first_name: firstName,
+              last_name: lastName,
             },
             properties: {
               scheduling_links: schedulingLinks,
@@ -278,9 +265,7 @@ async function trackKlaviyoEvent({
         },
       }
     );
-    console.log(
-      'Tracked Klaviyo event for purchase with multiple scheduling links.'
-    );
+    console.log('Tracked Klaviyo event: Placed Order Containing Event Product.');
   } catch (error) {
     console.error(
       'Error tracking Klaviyo event:',
@@ -294,7 +279,7 @@ async function trackKlaviyoEvent({
   }
 }
 
-// Function to add a note with multiple scheduling links to the Shopify order using GraphQL
+// Updated function to add a note with multiple scheduling links to the Shopify order using GraphQL
 async function addNoteToShopifyOrder({ orderId, schedulingLinks }) {
   try {
     const graphqlEndpoint = `https://${SHOPIFY_STORE_URL}/admin/api/2023-10/graphql.json`;
