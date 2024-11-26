@@ -1,3 +1,5 @@
+// functions/shopify-webhook-handler.js
+
 const axios = require('axios');
 const crypto = require('crypto');
 
@@ -9,53 +11,35 @@ const SHOPIFY_STORE_URL = process.env.SHOPIFY_STORE_URL;
 
 exports.handler = async (event, context) => {
   try {
-    const hmacHeader = event.headers['x-shopify-hmac-sha256'];
+    const hmacHeader = event.headers['x-shopify-hmac-sha256'] || event.headers['X-Shopify-Hmac-Sha256'];
     const body = event.body;
 
     if (!verifyShopifyWebhook(hmacHeader, body)) {
+      console.error('Invalid webhook signature.');
       return { statusCode: 401, body: 'Invalid request' };
     }
 
-    const webhookOrder = JSON.parse(body);
-    const orderId = webhookOrder.id;
+    const order = JSON.parse(body);
+    const customerEmail = order.email;
+    let firstName = '';
+    let lastName = '';
 
-    // Fetch the full order data including customer information via GraphQL
-    const order = await getFullOrderData(orderId);
-
-    if (!order) {
-      console.error('Failed to retrieve order data from Shopify.');
-      return { statusCode: 500, body: 'Failed to retrieve order data' };
+    // Check if the customer object exists
+    if (order.customer) {
+      firstName = order.customer.first_name || '';
+      lastName = order.customer.last_name || '';
+    } else if (order.billing_address) {
+      // Fallback to billing address for guest checkouts
+      firstName = order.billing_address.first_name || '';
+      lastName = order.billing_address.last_name || '';
     }
-
-    // Extract customer information
-    const customerEmail =
-      (order.customer && order.customer.email) ||
-      order.email ||
-      order.contactEmail ||
-      (order.billingAddress && order.billingAddress.email) ||
-      '';
-
-    const firstName =
-      (order.customer && order.customer.firstName) ||
-      (order.billingAddress && order.billingAddress.firstName) ||
-      '';
-
-    const lastName =
-      (order.customer && order.customer.lastName) ||
-      (order.billingAddress && order.billingAddress.lastName) ||
-      '';
-
-    console.log('Extracted customerEmail:', customerEmail);
-    console.log('Extracted firstName:', firstName);
-    console.log('Extracted lastName:', lastName);
 
     console.log(`Received order from ${firstName} ${lastName} (${customerEmail})`);
 
     let schedulingLinks = []; // Array to hold all scheduling links
 
-    for (const edge of order.lineItems.edges) {
-      const lineItem = edge.node;
-      const productId = lineItem.product.id.split('/').pop();
+    for (const lineItem of order.line_items) {
+      const productId = lineItem.product_id;
       const quantity = lineItem.quantity; // Number of times the event was purchased
 
       const eventHandle = await getCalendlyEventHandle(productId);
@@ -76,10 +60,7 @@ exports.handler = async (event, context) => {
               eventTypeUri,
             });
 
-            schedulingLinks.push({
-              title: `${lineItem.title} (Ticket ${i + 1})`,
-              link: schedulingLink,
-            });
+            schedulingLinks.push({ title: `${lineItem.title} (Ticket ${i + 1})`, link: schedulingLink });
           }
         } else {
           console.warn(`No matching event found for handle: ${eventHandle}`);
@@ -89,23 +70,18 @@ exports.handler = async (event, context) => {
 
     // Track the event in Klaviyo with all scheduling links
     if (schedulingLinks.length > 0) {
-      // Ensure customer email is available before tracking the event
-      if (!customerEmail) {
-        console.warn('No customer email available. Skipping Klaviyo event tracking.');
-      } else {
-        await trackKlaviyoEvent({
-          email: customerEmail,
-          firstName,
-          lastName,
-          schedulingLinks,
-          orderId: orderId,
-          orderTime: order.createdAt,
-        });
-      }
+      await trackKlaviyoEvent({
+        email: customerEmail,
+        firstName,
+        lastName,
+        schedulingLinks,
+        orderId: order.id,
+        orderTime: order.created_at,
+      });
 
       // Add all scheduling links to Shopify order notes
       await addNoteToShopifyOrder({
-        orderId: orderId,
+        orderId: order.id,
         schedulingLinks,
       });
     }
@@ -125,77 +101,6 @@ function verifyShopifyWebhook(hmacHeader, body) {
     .digest('base64');
 
   return generatedHash === hmacHeader;
-}
-
-// Function to fetch the full order data including customer information
-async function getFullOrderData(orderId) {
-  try {
-    const graphqlEndpoint = `https://${SHOPIFY_STORE_URL}/admin/api/2024-10/graphql.json`;
-
-    const query = `
-      query GetOrder($orderId: ID!) {
-        order(id: $orderId) {
-          id
-          name
-          email
-          contactEmail
-          createdAt
-          customer {
-            email
-            firstName
-            lastName
-          }
-          billingAddress {
-            firstName
-            lastName
-            email
-          }
-          lineItems(first: 100) {
-            edges {
-              node {
-                id
-                title
-                quantity
-                product {
-                  id
-                }
-              }
-            }
-          }
-        }
-      }
-    `;
-
-    const variables = {
-      orderId: `gid://shopify/Order/${orderId}`,
-    };
-
-    const response = await axios.post(
-      graphqlEndpoint,
-      { query, variables },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Shopify-Access-Token': ADMIN_API_ACCESS_TOKEN,
-        },
-      }
-    );
-
-    const data = response.data;
-
-    if (data.errors) {
-      console.error('GraphQL errors:', data.errors);
-      return null;
-    }
-
-    return data.data.order;
-  } catch (error) {
-    console.error(
-      'Error fetching order data:',
-      JSON.stringify(error.response ? error.response.data : error.message, null, 2)
-    );
-    return null;
-  }
 }
 
 // Function to retrieve the Calendly event handle from metaobject using GraphQL
@@ -254,9 +159,7 @@ async function getCalendlyEventHandle(productId) {
     const metaobject = metafield.reference;
 
     const fields = metaobject.fields;
-    const calendlyField = fields.find(
-      (field) => field.key === 'calendly_event_url_handle'
-    );
+    const calendlyField = fields.find((field) => field.key === 'calendly_event_url_handle');
 
     return calendlyField ? calendlyField.value : null;
   } catch (error) {
@@ -327,11 +230,7 @@ async function createCalendlySchedulingLink({ email, firstName, lastName, eventT
   } catch (error) {
     console.error(
       'Error creating scheduling link via Calendly:',
-      JSON.stringify(
-        error.response ? error.response.data : error.message,
-        null,
-        2
-      )
+      JSON.stringify(error.response ? error.response.data : error.message, null, 2)
     );
     throw new Error('Failed to create Calendly scheduling link');
   }
@@ -347,52 +246,43 @@ async function trackKlaviyoEvent({
   orderTime,
 }) {
   try {
-    const eventTimestamp = Math.floor(new Date(orderTime).getTime() / 1000);
+    const eventTime = new Date(orderTime).toISOString();
 
-    // Build customer properties
-    const customerProperties = {};
-    if (email) customerProperties.$email = email;
-    if (firstName) customerProperties.$first_name = firstName;
-    if (lastName) customerProperties.$last_name = lastName;
-
-    if (!email) {
-      console.warn('No customer email available. Skipping Klaviyo event tracking.');
-      return;
-    }
-
-    const payload = {
-      data: {
-        type: 'event',
-        attributes: {
-          event: 'Order Contains Event',
-          customer_properties: customerProperties,
-          properties: {
-            scheduling_links: schedulingLinks,
-            order_id: orderId,
+    await axios.post(
+      'https://a.klaviyo.com/api/events/',
+      {
+        data: {
+          type: 'event',
+          attributes: {
+            metric: {
+              name: 'Placed Order Containing Event Product',
+            },
+            profile: {
+              email: email,
+              first_name: firstName,
+              last_name: lastName,
+            },
+            properties: {
+              scheduling_links: schedulingLinks, // Pass the array of links
+              order_id: orderId,
+            },
+            time: eventTime,
           },
-          time: eventTimestamp,
         },
       },
-    };
-
-    console.log('Klaviyo event payload:', JSON.stringify(payload, null, 2));
-
-    await axios.post('https://a.klaviyo.com/api/events/', payload, {
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Klaviyo-API-Key ${KLAVIYO_API_KEY}`,
-        Revision: '2023-07-15',
-      },
-    });
-    console.log('Tracked Klaviyo event: Order Contains Event.');
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Klaviyo-API-Key ${KLAVIYO_API_KEY}`,
+          revision: '2023-07-15',
+        },
+      }
+    );
+    console.log('Tracked Klaviyo event for purchase with multiple scheduling links.');
   } catch (error) {
     console.error(
       'Error tracking Klaviyo event:',
-      JSON.stringify(
-        error.response ? error.response.data : error.message,
-        null,
-        2
-      )
+      JSON.stringify(error.response ? error.response.data : error.message, null, 2)
     );
     throw new Error('Failed to track Klaviyo event');
   }
@@ -458,11 +348,7 @@ async function addNoteToShopifyOrder({ orderId, schedulingLinks }) {
   } catch (error) {
     console.error(
       'Error adding note to Shopify order:',
-      JSON.stringify(
-        error.response ? error.response.data : error.message,
-        null,
-        2
-      )
+      JSON.stringify(error.response ? error.response.data : error.message, null, 2)
     );
     throw new Error('Failed to add note to Shopify order');
   }
