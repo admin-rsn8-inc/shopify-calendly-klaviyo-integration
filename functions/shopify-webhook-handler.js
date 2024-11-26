@@ -20,6 +20,8 @@ exports.handler = async (event, context) => {
     }
 
     const order = JSON.parse(body);
+    console.log('Received order object:', JSON.stringify(order, null, 2));
+
     const customerEmail = order.email;
     let firstName = '';
     let lastName = '';
@@ -41,6 +43,8 @@ exports.handler = async (event, context) => {
     for (const lineItem of order.line_items) {
       const productId = lineItem.product_id;
       const quantity = lineItem.quantity; // Number of times the event was purchased
+
+      console.log(`Processing line item: ${lineItem.title}, Product ID: ${productId}, Quantity: ${quantity}`);
 
       const eventHandle = await getCalendlyEventHandle(productId);
 
@@ -65,8 +69,12 @@ exports.handler = async (event, context) => {
         } else {
           console.warn(`No matching event found for handle: ${eventHandle}`);
         }
+      } else {
+        console.warn(`No Calendly event handle found for product ID: ${productId}`);
       }
     }
+
+    console.log('Generated scheduling links:', JSON.stringify(schedulingLinks, null, 2));
 
     // Track the event in Klaviyo with all scheduling links
     if (schedulingLinks.length > 0) {
@@ -84,6 +92,8 @@ exports.handler = async (event, context) => {
         orderId: order.id,
         schedulingLinks,
       });
+    } else {
+      console.log('No scheduling links generated, skipping Klaviyo event tracking and order note update.');
     }
 
     return { statusCode: 200, body: 'Success' };
@@ -161,7 +171,11 @@ async function getCalendlyEventHandle(productId) {
     const fields = metaobject.fields;
     const calendlyField = fields.find((field) => field.key === 'calendly_event_url_handle');
 
-    return calendlyField ? calendlyField.value : null;
+    const eventHandle = calendlyField ? calendlyField.value : null;
+
+    console.log(`Retrieved Calendly event handle: ${eventHandle} for product ID: ${productId}`);
+
+    return eventHandle;
   } catch (error) {
     console.error(
       'Error fetching Calendly event handle from metaobject:',
@@ -191,7 +205,11 @@ async function getCalendlyEventTypeUri(eventHandle) {
       (event) => event.slug === eventHandle
     );
 
-    return eventType ? eventType.uri : null;
+    const eventTypeUri = eventType ? eventType.uri : null;
+
+    console.log(`Retrieved Calendly event type URI: ${eventTypeUri} for event handle: ${eventHandle}`);
+
+    return eventTypeUri;
   } catch (error) {
     console.error(
       'Error retrieving Calendly event type URI:',
@@ -248,28 +266,42 @@ async function trackKlaviyoEvent({
   try {
     const eventTime = new Date(orderTime).toISOString();
 
-    await axios.post(
-      'https://a.klaviyo.com/api/events/',
-      {
-        data: {
-          type: 'event',
-          attributes: {
-            metric: {
-              name: 'Placed Order Containing Event Product',
+    const payload = {
+      data: {
+        type: 'event',
+        attributes: {
+          metric: {
+            data: {
+              type: 'metric',
+              attributes: {
+                name: 'Placed Order Containing Event Product',
+              },
             },
-            profile: {
-              email: email,
-              first_name: firstName,
-              last_name: lastName,
-            },
-            properties: {
-              scheduling_links: schedulingLinks, // Pass the array of links
-              order_id: orderId,
-            },
-            time: eventTime,
           },
+          profile: {
+            data: {
+              type: 'profile',
+              attributes: {
+                email: email,
+                first_name: firstName,
+                last_name: lastName,
+              },
+            },
+          },
+          properties: {
+            scheduling_links: schedulingLinks, // Pass the array of links
+            order_id: orderId,
+          },
+          time: eventTime,
         },
       },
+    };
+
+    console.log('Sending payload to Klaviyo:', JSON.stringify(payload, null, 2));
+
+    const response = await axios.post(
+      'https://a.klaviyo.com/api/events/',
+      payload,
       {
         headers: {
           'Content-Type': 'application/json',
@@ -296,6 +328,8 @@ async function addNoteToShopifyOrder({ orderId, schedulingLinks }) {
     const notes = schedulingLinks
       .map((link) => `${link.title}: ${link.link}`)
       .join('\n');
+
+    console.log(`Adding note to Shopify order ${orderId}:\n${notes}`);
 
     const mutation = `
       mutation UpdateOrder($input: OrderInput!) {
