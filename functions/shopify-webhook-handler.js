@@ -17,9 +17,9 @@ exports.handler = async (event, context) => {
     }
 
     const order = JSON.parse(body);
-    const customerEmail = order.email;
-    const firstName = order.customer.first_name;
-    const lastName = order.customer.last_name;
+    const customerEmail = order.email || (order.customer && order.customer.email);
+    const firstName = order.customer ? order.customer.first_name : '';
+    const lastName = order.customer ? order.customer.last_name : '';
 
     console.log(`Received order from ${firstName} ${lastName} (${customerEmail})`);
 
@@ -223,7 +223,7 @@ async function createCalendlySchedulingLink({ email, firstName, lastName, eventT
   }
 }
 
-// Corrected function to track a custom event in Klaviyo
+// Function to track a custom event in Klaviyo
 async function trackKlaviyoEvent({
   email,
   firstName,
@@ -233,47 +233,47 @@ async function trackKlaviyoEvent({
   orderTime,
 }) {
   try {
-    const eventTime = new Date(orderTime).toISOString();
+    const eventTimestamp = Math.floor(new Date(orderTime).getTime() / 1000);
+
+    // Build customer properties
+    const customerProperties = {
+      $email: email,
+    };
+    if (firstName) customerProperties.$first_name = firstName;
+    if (lastName) customerProperties.$last_name = lastName;
+
+    const payload = {
+      data: {
+        type: 'event',
+        attributes: {
+          event: 'Order Contains Event',
+          customer_properties: customerProperties,
+          properties: {
+            scheduling_links: schedulingLinks,
+            order_id: orderId,
+          },
+          time: eventTimestamp,
+        },
+      },
+    };
+
+    console.log('Klaviyo event payload:', JSON.stringify(payload, null, 2));
 
     await axios.post(
       'https://a.klaviyo.com/api/events/',
-      {
-        data: {
-          type: 'event',
-          attributes: {
-            metric: {
-              name: 'Placed Order Containing Event Product', // Updated event name
-            },
-            profile: {
-              email: email,
-              first_name: firstName,
-              last_name: lastName,
-            },
-            properties: {
-              scheduling_links: schedulingLinks,
-              order_id: orderId,
-            },
-            time: eventTime,
-          },
-        },
-      },
+      payload,
       {
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Klaviyo-API-Key ${KLAVIYO_API_KEY}`,
-          revision: '2023-07-15',
         },
       }
     );
-    console.log('Tracked Klaviyo event: Placed Order Containing Event Product.');
+    console.log('Tracked Klaviyo event: Order Contains Event.');
   } catch (error) {
     console.error(
       'Error tracking Klaviyo event:',
-      JSON.stringify(
-        error.response ? error.response.data : error.message,
-        null,
-        2
-      )
+      JSON.stringify(error.response ? error.response.data : error.message, null, 2)
     );
     throw new Error('Failed to track Klaviyo event');
   }
