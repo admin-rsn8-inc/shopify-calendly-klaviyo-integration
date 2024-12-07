@@ -188,11 +188,12 @@ async function trackKlaviyoEvent({ nonPiiId, eventProducts, orderId, orderTime }
               },
             },
           },
-          profile: {
-            data: {
-              type: 'profile',
-              attributes: {
-                $id: nonPiiId, // Non-PII unique identifier
+          // Updated (allowed):
+          "profile": {
+            "data": {
+              "type": "profile",
+              "attributes": {
+                "external_id": "order_5845762638078"
               },
             },
           },
